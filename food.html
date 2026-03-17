@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FoodAI • Трекер еды</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@700&display=swap');
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #0f0f17;
+      color: #e5e7eb;
+    }
+
+    .logo-font { font-family: 'Playfair Display', serif; }
+
+    .upload-zone {
+      transition: all 0.3s ease;
+    }
+    .upload-zone.dragover {
+      background: rgba(34,197,94,0.15) !important;
+      border-color: #22c55e !important;
+    }
+
+    .progress-bar {
+      height: 12px;
+      background: #27272a;
+      border-radius: 9999px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      transition: width 0.6s ease;
+    }
+
+    @media (max-width: 1024px) {
+      .sidebar {
+        position: fixed;
+        left: -280px;
+        top: 0;
+        height: 100%;
+        z-index: 50;
+        transition: left 0.3s ease;
+      }
+      .sidebar.open { left: 0; }
+      .main-content { padding-top: 4rem; }
+      .calendar-day { width: 36px; height: 36px; font-size: 0.9rem; }
+    }
+
+    .calendar-day {
+      width: 42px;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- Мобильный хедер -->
+<header class="lg:hidden fixed top-0 left-0 right-0 h-16 bg-zinc-900 border-b border-zinc-800 z-40 flex items-center px-4 justify-between">
+  <button id="menu-toggle" class="text-2xl text-emerald-400"><i class="fas fa-bars"></i></button>
+  <h1 class="logo-font text-2xl font-bold">FoodAI</h1>
+  <div class="w-8"></div>
+</header>
+
+<!-- Сайдбар -->
+<div id="sidebar" class="sidebar w-72 bg-zinc-900 border-r border-zinc-800 flex flex-col h-full lg:relative fixed lg:translate-x-0">
+  <div class="p-6 border-b border-zinc-800 flex items-center justify-between lg:justify-start">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 bg-emerald-500 rounded-2xl flex items-center justify-center text-3xl">🍎</div>
+      <span class="logo-font text-3xl font-bold">FoodAI</span>
+    </div>
+    <button id="menu-close" class="lg:hidden text-2xl text-zinc-400"><i class="fas fa-times"></i></button>
+  </div>
+
+  <nav class="flex-1 p-4 space-y-2">
+    <a onclick="switchTab(0)" class="tab-btn flex items-center gap-3 px-4 py-3 rounded-2xl bg-emerald-500/10 text-emerald-400 font-medium"><i class="fas fa-camera"></i> Новый приём</a>
+    <a onclick="switchTab(1)" class="tab-btn flex items-center gap-3 px-4 py-3 rounded-2xl hover:bg-zinc-800"><i class="fas fa-history"></i> История</a>
+    <a onclick="switchTab(2)" class="tab-btn flex items-center gap-3 px-4 py-3 rounded-2xl hover:bg-zinc-800"><i class="fas fa-calendar"></i> Календарь</a>
+    <a onclick="showProfileModal()" class="tab-btn flex items-center gap-3 px-4 py-3 rounded-2xl hover:bg-zinc-800"><i class="fas fa-user"></i> Профиль</a>
+  </nav>
+
+  <div class="p-6 border-t border-zinc-800">
+    <button onclick="showApiKeyModal()" class="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-2xl flex items-center justify-center gap-2 text-sm">
+      <i class="fas fa-key"></i> Gemini ключ
+    </button>
+    <div id="api-status" class="text-xs text-center mt-3 text-zinc-500"></div>
+  </div>
+</div>
+
+<!-- Основной контент -->
+<div class="flex-1 flex flex-col lg:ml-72 main-content">
+  <!-- Прогресс сегодня -->
+  <div class="sticky top-16 lg:top-0 z-30 bg-zinc-950 border-b border-zinc-800 px-4 sm:px-6 py-4">
+    <div class="max-w-5xl mx-auto">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <div class="text-sm text-zinc-400">Сегодня</div>
+          <div class="text-xl sm:text-2xl font-bold" id="today-calories">0 / 2500 ккал</div>
+        </div>
+        <div class="flex-1 max-w-xs">
+          <div class="text-sm text-zinc-400 mb-1">Белок</div>
+          <div class="progress-bar">
+            <div id="prot-progress" class="progress-fill bg-emerald-500 w-0"></div>
+          </div>
+          <div class="text-right text-sm mt-1" id="today-protein">0 / 180 г</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex-1 p-6 lg:p-8 overflow-auto">
+    <!-- TAB 0 – загрузка -->
+    <div id="tab-0" class="max-w-4xl mx-auto">
+      <div class="text-center mb-8 lg:mb-12">
+        <h2 class="text-4xl lg:text-5xl font-bold tracking-tighter">Загрузи фото блюда</h2>
+        <p class="text-zinc-400 mt-3">Gemini 2.5 посчитает калории, БЖУ и граммы</p>
+      </div>
+
+      <div id="upload-zone" class="upload-zone border-4 border-dashed border-zinc-700 hover:border-emerald-500 rounded-3xl h-72 lg:h-96 flex flex-col items-center justify-center cursor-pointer bg-zinc-900/50">
+        <i class="fas fa-cloud-upload-alt text-7xl lg:text-8xl text-emerald-500 mb-6"></i>
+        <p class="text-2xl lg:text-3xl font-medium">Перетащи фото сюда</p>
+        <p class="text-zinc-400 mt-2 mb-6">или нажми</p>
+        <input type="file" id="file-input" accept="image/*" class="hidden" />
+        <button onclick="document.getElementById('file-input').click()" class="bg-emerald-500 hover:bg-emerald-600 px-8 lg:px-10 py-4 rounded-2xl font-bold text-base lg:text-lg">
+          Выбрать фото
+        </button>
+      </div>
+
+      <div id="preview-container" class="hidden mt-8 lg:mt-10 bg-zinc-900 rounded-3xl p-6 lg:p-8">
+        <div class="flex flex-col lg:flex-row gap-6 lg:gap-10">
+          <div class="flex-1">
+            <img id="preview-image" class="w-full rounded-3xl shadow-2xl max-h-[360px] lg:max-h-[420px] object-cover" alt="Фото блюда">
+          </div>
+          <div class="flex-1 flex flex-col justify-center">
+            <button onclick="startRealAnalysis()" class="w-full py-6 lg:py-8 bg-gradient-to-r from-emerald-500 to-teal-500 text-xl lg:text-2xl font-bold rounded-3xl hover:scale-105 transition-transform">
+              🚀 Запустить анализ
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB RESULTS -->
+    <div id="tab-results" class="hidden max-w-5xl mx-auto">
+      <div class="flex flex-col sm:flex-row justify-between items-start mb-8 gap-4">
+        <div class="flex items-center gap-4">
+          <img id="result-image" class="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl object-cover shadow-xl">
+          <div>
+            <input id="dish-name" class="bg-transparent text-3xl sm:text-4xl font-bold w-full sm:w-96 focus:outline-none border-b focus:border-emerald-400" value="Блюдо">
+            <div class="text-emerald-400 text-sm flex items-center gap-2 mt-1"><i class="fas fa-brain"></i> Gemini 2.5 Flash</div>
+          </div>
+        </div>
+        <button onclick="backToUpload()" class="text-zinc-400 hover:text-white text-sm sm:text-base">Новое фото</button>
+      </div>
+
+      <div class="bg-zinc-900 rounded-3xl p-6 sm:p-8 mb-8 overflow-x-auto">
+        <h3 class="font-semibold mb-6">Ингредиенты</h3>
+        <table class="w-full min-w-[600px]">
+          <thead>
+            <tr class="text-xs text-zinc-400 border-b border-zinc-800">
+              <th class="text-left py-4">Ингредиент</th>
+              <th class="text-center py-4">Граммы</th>
+              <th class="text-right py-4">Ккал</th>
+              <th class="text-right py-4">Б</th>
+              <th class="text-right py-4">Ж</th>
+              <th class="text-right py-4">У</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ingredients-body"></tbody>
+        </table>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+        <div class="bg-zinc-900 rounded-3xl p-6 lg:p-8">
+          <h3 class="mb-6 font-semibold">Итого</h3>
+          <div id="total-calories" class="text-6xl lg:text-7xl font-bold">0</div>
+          <div class="text-emerald-400 text-sm tracking-widest">КИЛОКАЛОРИИ</div>
+          <div class="grid grid-cols-3 gap-4 lg:gap-6 mt-6 lg:mt-8 text-sm">
+            <div>Белки <span id="total-protein" class="block font-bold text-lg lg:text-xl">0г</span></div>
+            <div>Жиры <span id="total-fat" class="block font-bold text-lg lg:text-xl">0г</span></div>
+            <div>Углеводы <span id="total-carbs" class="block font-bold text-lg lg:text-xl">0г</span></div>
+          </div>
+          <button onclick="addToLog()" class="mt-8 lg:mt-10 w-full py-4 lg:py-5 bg-white text-black font-bold rounded-3xl hover:bg-emerald-400 hover:text-white transition-colors">
+            ДОБАВИТЬ В ДНЕВНИК
+          </button>
+        </div>
+
+        <div class="bg-zinc-900 rounded-3xl p-6 lg:p-8">
+          <canvas id="macro-chart" height="220" class="w-full"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 1 – История -->
+    <div id="tab-1" class="hidden max-w-4xl mx-auto">
+      <h2 class="text-3xl lg:text-4xl font-bold mb-6 lg:mb-8">История приёмов пищи</h2>
+      <div id="history-list" class="space-y-4 lg:space-y-6"></div>
+    </div>
+
+    <!-- TAB 2 – Календарь -->
+    <div id="tab-2" class="hidden max-w-4xl mx-auto">
+      <h2 class="text-3xl lg:text-4xl font-bold mb-6 lg:mb-8">Календарь прогресса</h2>
+      <div id="calendar-grid" class="grid grid-cols-7 gap-2 lg:gap-3 bg-zinc-900 rounded-3xl p-6 lg:p-8 justify-items-center"></div>
+      <div class="flex flex-wrap gap-4 lg:gap-6 mt-6 lg:mt-8 text-sm">
+        <div class="flex items-center gap-2"><div class="w-5 h-5 bg-emerald-500 rounded-full"></div> калории + белок</div>
+        <div class="flex items-center gap-2"><div class="w-5 h-5 bg-orange-500 rounded-full"></div> только калории</div>
+        <div class="flex items-center gap-2"><div class="w-5 h-5 bg-violet-500 rounded-full"></div> только белок</div>
+        <div class="flex items-center gap-2"><div class="w-5 h-5 bg-red-500 rounded-full"></div> ничего не добрал</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Модал профиля -->
+<div id="profile-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+  <div class="bg-zinc-900 rounded-3xl p-6 lg:p-8 max-w-lg w-full">
+    <h3 class="text-2xl font-bold mb-6">Твой профиль</h3>
+    <div class="space-y-5">
+      <div><label class="text-xs text-zinc-400">Рост (см)</label><input id="height" type="number" value="175" class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"></div>
+      <div><label class="text-xs text-zinc-400">Текущий вес (кг)</label><input id="weight" type="number" value="80" class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"></div>
+      <div><label class="text-xs text-zinc-400">Желаемый вес (кг)</label><input id="target-weight" type="number" value="75" class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"></div>
+      <div>
+        <label class="text-xs text-zinc-400">Цель</label>
+        <select id="goal" class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4">
+          <option value="lose">Сбросить вес</option>
+          <option value="gain">Набрать вес</option>
+          <option value="maintain" selected>Поддерживать</option>
+        </select>
+      </div>
+      <div><label class="text-xs text-zinc-400">Темп (кг/неделя)</label><input id="rate" type="number" step="0.1" value="0.5" class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4"></div>
+    </div>
+    <button onclick="saveProfile()" class="mt-8 w-full py-5 bg-emerald-500 rounded-3xl font-bold hover:bg-emerald-600">Сохранить и рассчитать</button>
+    <div id="profile-result" class="mt-6 text-center text-emerald-400 text-sm"></div>
+  </div>
+</div>
+
+<!-- Модал ключа -->
+<div id="apikey-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+  <div class="bg-zinc-900 rounded-3xl p-6 lg:p-8 max-w-md w-full">
+    <h3 class="text-2xl font-bold mb-4">Gemini API ключ</h3>
+    <input id="api-key-input" type="text" placeholder="AIzaSy..." class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 text-lg">
+    <p class="text-xs text-zinc-400 mt-4">Получить бесплатно: <a href="https://aistudio.google.com/app/apikey" target="_blank" class="underline text-emerald-400">aistudio.google.com</a></p>
+    <div class="mt-8 flex gap-3">
+      <button onclick="hideApiKeyModal()" class="flex-1 py-4 border border-zinc-700 rounded-2xl">Отмена</button>
+      <button onclick="saveApiKey()" class="flex-1 py-4 bg-emerald-500 rounded-2xl">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// =============================================
+//  ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// =============================================
+let API_KEY = 'AIzaSyDa09sFNNxEZysXQ-qsmyZgUr6bnloNowM'; // Вставь сюда свой API ключ от Gemini
+if (!API_KEY || API_KEY === 'AIzaSyDa09sFNNxEZysXQ-qsmyZgUr6bnloNowM') API_KEY = localStorage.getItem('geminiKey') || '';
+let currentPhotoBase64 = '';
+let currentIngredients = [];
+let currentTotal = { cal: 0, prot: 0, fat: 0, carb: 0 };
+let history = JSON.parse(localStorage.getItem('foodHistory')) || [];
+let dailyLog = JSON.parse(localStorage.getItem('dailyLog')) || {};
+let profile = JSON.parse(localStorage.getItem('profile')) || {
+  height: 175,
+  weight: 80,
+  target: 75,
+  goal: 'lose',
+  rate: 0.5,
+  dailyCal: 2500,
+  dailyProt: 180
+};
+
+let macroChart = null;
+
+const MODEL = "gemini-2.5-flash";
+
+const SYSTEM_PROMPT = `Ты профессиональный нутрициолог. Проанализируй фото блюда ОЧЕНЬ точно. Для каждого ингредиента укажи реалистичную граммовку и точные значения БЖУ и калорий на 100 г (по данным USDA). Верни ТОЛЬКО валидный JSON без любого другого текста:
+
+{
+  "dishName": "Название блюда на русском",
+  "ingredients": [
+    {"name": "Рис варёный", "grams": 200, "cal": 130, "prot": 2.7, "fat": 0.3, "carb": 28},
+    {"name": "Куриная грудка", "grams": 150, "cal": 165, "prot": 31, "fat": 3.6, "carb": 0}
+  ],
+  "total": {"cal": 650, "prot": 45, "fat": 28, "carb": 55}
+}`;
+
+// =============================================
+//  ФУНКЦИИ
+// =============================================
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    currentPhotoBase64 = e.target.result;
+    document.getElementById('upload-zone').classList.add('hidden');
+    document.getElementById('preview-container').classList.remove('hidden');
+    document.getElementById('preview-image').src = currentPhotoBase64;
+  };
+  reader.readAsDataURL(file);
+}
+
+function setupDragDrop() {
+  const zone = document.getElementById('upload-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+}
+
+document.getElementById('menu-toggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.add('open');
+});
+
+document.getElementById('menu-close').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.remove('open');
+});
+
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+async function startRealAnalysis() {
+  if (!currentPhotoBase64) return alert("Сначала выбери фото!");
+  if (!API_KEY) return showApiKeyModal();
+
+  const loading = document.createElement('div');
+  loading.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;color:white';
+  loading.innerHTML = `<div class="text-center"><div class="w-20 h-20 border-8 border-emerald-500 border-t-transparent animate-spin mx-auto mb-6"></div><p class="text-2xl">Gemini 2.5 Flash считает...</p></div>`;
+  document.body.appendChild(loading);
+
+  try {
+    const base64 = currentPhotoBase64.split(',')[1];
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+    const corsProxy = 'https://thingproxy.freeboard.io/fetch/';
+    
+    const res = await fetch(corsProxy + apiUrl, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ contents: [{ parts: [{ text: SYSTEM_PROMPT }, { inlineData: { mimeType: "image/jpeg", data: base64 } }] }] })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.candidates || !data.candidates[0]) {
+      throw new Error(data.error?.message || "Ошибка Gemini. Проверь ключ / интернет.");
+    }
+
+    const text = data.candidates[0].content.parts[0].text;
+    const match = text.match(/\{[\s\S]*\}/);
+    const parsed = match ? JSON.parse(match[0]) : null;
+
+    if (!parsed || !parsed.ingredients) throw new Error("Gemini не дал числовые значения. Попробуй другое фото.");
+
+    currentIngredients = parsed.ingredients;
+    document.getElementById('dish-name').value = parsed.dishName || "Блюдо";
+    document.getElementById('result-image').src = currentPhotoBase64;
+
+    document.getElementById('tab-0').classList.add('hidden');
+    document.getElementById('tab-results').classList.remove('hidden');
+
+    renderIngredientsTable();
+    updateTotals();
+    updateMacroChart();
+  } catch (e) {
+    alert("❌ " + e.message);
+  } finally {
+    document.body.removeChild(loading);
+  }
+}
+
+function renderIngredientsTable() {
+  const tbody = document.getElementById('ingredients-body');
+  tbody.innerHTML = '';
+  currentIngredients.forEach((item, i) => {
+    const tr = document.createElement('tr');
+    tr.className = 'ingredient-row border-b border-zinc-800';
+    tr.innerHTML = `
+      <td class="py-5 font-medium">${item.name || '—'}</td>
+      <td class="py-5 text-center">
+        <input type="number" value="${item.grams || 100}" onblur="updateGrams(${i}, this.value)" class="bg-transparent w-16 text-center focus:outline-none border-b focus:border-emerald-400">
+      </td>
+      <td class="py-5 text-right">${Math.round(item.cal || 0)}</td>
+      <td class="py-5 text-right">${(item.prot || 0).toFixed(1)}г</td>
+      <td class="py-5 text-right">${(item.fat || 0).toFixed(1)}г</td>
+      <td class="py-5 text-right">${(item.carb || 0).toFixed(1)}г</td>
+      <td><button onclick="deleteIngredient(${i})" class="text-red-400 hover:text-red-300"><i class="fas fa-times"></i></button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function updateGrams(index, value) {
+  currentIngredients[index].grams = parseFloat(value) || 100;
+  renderIngredientsTable();
+  updateTotals();
+  updateMacroChart();
+}
+
+function deleteIngredient(index) {
+  currentIngredients.splice(index, 1);
+  renderIngredientsTable();
+  updateTotals();
+  updateMacroChart();
+}
+
+function updateTotals() {
+  let cal = 0, prot = 0, fat = 0, carb = 0;
+  currentIngredients.forEach(item => {
+    const factor = (item.grams || 100) / 100;
+    cal += Math.round((item.cal || 0) * factor);
+    prot += Math.round((item.prot || 0) * factor * 10) / 10;
+    fat += Math.round((item.fat || 0) * factor * 10) / 10;
+    carb += Math.round((item.carb || 0) * factor * 10) / 10;
+  });
+  currentTotal = { cal, prot, fat, carb };
+
+  document.getElementById('total-calories').textContent = cal;
+  document.getElementById('total-protein').textContent = prot + 'г';
+  document.getElementById('total-fat').textContent = fat + 'г';
+  document.getElementById('total-carbs').textContent = carb + 'г';
+}
+
+function updateMacroChart() {
+  if (macroChart) macroChart.destroy();
+  macroChart = new Chart(document.getElementById('macro-chart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Белки', 'Жиры', 'Углеводы'],
+      datasets: [{
+        data: [currentTotal.prot * 4, currentTotal.fat * 9, currentTotal.carb * 4],
+        backgroundColor: ['#10b981', '#eab308', '#3b82f6'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      cutout: '70%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#ddd', font: { size: 14 } } }
+      }
+    }
+  });
+}
+
+function updateTodayProgress() {
+  const today = new Date().toISOString().split('T')[0];
+  const todayData = dailyLog[today] || { cal: 0, prot: 0 };
+  const calGoal = profile.dailyCal || 2500;
+  const protGoal = profile.dailyProt || 180;
+  document.getElementById('today-calories').textContent = `${todayData.cal} / ${calGoal} ккал`;
+  const protPercent = Math.min((todayData.prot / protGoal) * 100, 100);
+  document.getElementById('prot-progress').style.width = `${protPercent}%`;
+  document.getElementById('today-protein').textContent = `${todayData.prot.toFixed(1)} / ${protGoal} г`;
+}
+
+function renderHistory() {
+  const container = document.getElementById('history-list');
+  container.innerHTML = history.length === 0 ? '<div class="text-center py-20 text-zinc-500">Пока ничего нет</div>' : '';
+  history.forEach(entry => {
+    const div = document.createElement('div');
+    div.className = "bg-zinc-900 rounded-3xl p-6 flex flex-col sm:flex-row gap-6 items-center";
+    div.innerHTML = `
+      <img src="${entry.photo}" class="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-3xl">
+      <div class="flex-1">
+        <div class="text-xs text-zinc-500">${entry.date}</div>
+        <div class="text-lg sm:text-xl font-semibold">${entry.dish}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-4xl sm:text-5xl font-bold text-emerald-400">${entry.calories}</div>
+        <div class="text-xs text-zinc-400">ккал</div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function addToLog() {
+  const name = document.getElementById('dish-name').value.trim() || "Блюдо";
+  const today = new Date().toISOString().split('T')[0];
+  const dateStr = new Date().toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+
+  history.unshift({
+    id: Date.now(),
+    date: dateStr,
+    dish: name,
+    calories: currentTotal.cal,
+    photo: currentPhotoBase64
+  });
+
+  if (!dailyLog[today]) dailyLog[today] = { cal: 0, prot: 0 };
+  dailyLog[today].cal += currentTotal.cal;
+  dailyLog[today].prot += currentTotal.prot;
+
+  localStorage.setItem('foodHistory', JSON.stringify(history));
+  localStorage.setItem('dailyLog', JSON.stringify(dailyLog));
+
+  renderHistory();
+  renderCalendar();
+  updateTodayProgress();
+
+  alert(`✅ "${name}" добавлено (${currentTotal.cal} ккал)`);
+  backToUpload();
+}
+
+function backToUpload() {
+  document.getElementById('tab-results').classList.add('hidden');
+  document.getElementById('tab-0').classList.remove('hidden');
+  document.getElementById('preview-container').classList.add('hidden');
+  document.getElementById('upload-zone').classList.remove('hidden');
+  currentPhotoBase64 = '';
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('bg-emerald-500/10', 'text-emerald-400'));
+  document.getElementById('tab-0').classList.add('hidden');
+  document.getElementById('tab-results').classList.add('hidden');
+  document.getElementById('tab-1').classList.add('hidden');
+  document.getElementById('tab-2').classList.add('hidden');
+
+  if (tab === 0) {
+    document.getElementById('tab-0').classList.remove('hidden');
+    document.querySelectorAll('.tab-btn')[0].classList.add('bg-emerald-500/10', 'text-emerald-400');
+  } else if (tab === 1) {
+    document.getElementById('tab-1').classList.remove('hidden');
+    renderHistory();
+    document.querySelectorAll('.tab-btn')[1].classList.add('bg-emerald-500/10', 'text-emerald-400');
+  } else if (tab === 2) {
+    document.getElementById('tab-2').classList.remove('hidden');
+    renderCalendar();
+    document.querySelectorAll('.tab-btn')[2].classList.add('bg-emerald-500/10', 'text-emerald-400');
+  }
+}
+
+function renderCalendar() {
+  const grid = document.getElementById('calendar-grid');
+  grid.innerHTML = '';
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dayData = dailyLog[dateStr] || { cal: 0, prot: 0 };
+
+    const calGoal = profile.dailyCal || 2500;
+    const protGoal = profile.dailyProt || 180;
+
+    let colorClass = 'bg-red-500';
+    if (dayData.cal >= calGoal && dayData.prot >= protGoal) colorClass = 'bg-emerald-500';
+    else if (dayData.cal >= calGoal) colorClass = 'bg-orange-500';
+    else if (dayData.prot >= protGoal) colorClass = 'bg-violet-500';
+
+    const day = document.createElement('div');
+    day.className = `calendar-day ${colorClass} text-white`;
+    day.textContent = d;
+    grid.appendChild(day);
+  }
+}
+
+function showProfileModal() {
+  document.getElementById('height').value = profile.height || 175;
+  document.getElementById('weight').value = profile.weight || 80;
+  document.getElementById('target-weight').value = profile.target || 75;
+  document.getElementById('goal').value = profile.goal || 'lose';
+  document.getElementById('rate').value = profile.rate || 0.5;
+  document.getElementById('profile-modal').classList.remove('hidden');
+}
+
+function saveProfile() {
+  profile.height = parseFloat(document.getElementById('height').value) || 175;
+  profile.weight = parseFloat(document.getElementById('weight').value) || 80;
+  profile.target = parseFloat(document.getElementById('target-weight').value) || 75;
+  profile.goal = document.getElementById('goal').value;
+  profile.rate = parseFloat(document.getElementById('rate').value) || 0.5;
+
+  // примерный расчёт (Harris-Benedict для мужчины ~30 лет, умеренная активность)
+  const bmr = 88.362 + (13.397 * profile.weight) + (4.799 * profile.height) - (5.677 * 30);
+  let tdee = Math.round(bmr * 1.55);
+
+  if (profile.goal === 'lose') tdee -= Math.round(profile.rate * 7700 / 7);
+  if (profile.goal === 'gain') tdee += Math.round(profile.rate * 7700 / 7);
+
+  profile.dailyCal = tdee;
+  profile.dailyProt = Math.round(profile.weight * 2.2);
+
+  localStorage.setItem('profile', JSON.stringify(profile));
+  document.getElementById('profile-result').innerHTML = `Норма на день:<br>Калории: <b>${tdee}</b> ккал<br>Белок: <b>${profile.dailyProt}</b> г`;
+  document.getElementById('profile-modal').classList.add('hidden');
+
+  updateTodayProgress();
+  renderCalendar();
+}
+
+function showApiKeyModal() { document.getElementById('apikey-modal').classList.remove('hidden'); }
+function hideApiKeyModal() { document.getElementById('apikey-modal').classList.add('hidden'); }
+function saveApiKey() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (key) {
+    API_KEY = key;
+    localStorage.setItem('geminiKey', key);
+    document.getElementById('api-status').innerHTML = '<span class="text-emerald-400">Ключ сохранён ✓</span>';
+    hideApiKeyModal();
+  }
+}
+
+// =============================================
+//  ИНИЦИАЛИЗАЦИЯ
+// =============================================
+function init() {
+  setupDragDrop();
+  switchTab(0);
+  renderHistory();
+  renderCalendar();
+  updateTodayProgress();
+
+  if (!localStorage.getItem('profile')) {
+    showProfileModal();
+  }
+
+  console.log('%cFoodAI — полностью рабочая версия готова!', 'color:#22c55e; font-size:16px; font-weight:bold');
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
