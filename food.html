@@ -131,7 +131,7 @@
         <i class="fas fa-cloud-upload-alt text-7xl lg:text-8xl text-emerald-500 mb-6"></i>
         <p class="text-2xl lg:text-3xl font-medium">Перетащи фото сюда</p>
         <p class="text-zinc-400 mt-2 mb-6">или нажми</p>
-        <input type="file" id="file-input" accept="image/*" class="hidden" />
+        <input type="file" id="file-input" accept="image/*" capture="environment" class="hidden" />
         <button onclick="document.getElementById('file-input').click()" class="bg-emerald-500 hover:bg-emerald-600 px-8 lg:px-10 py-4 rounded-2xl font-bold text-base lg:text-lg">
           Выбрать фото
         </button>
@@ -250,11 +250,17 @@
 <div id="apikey-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
   <div class="bg-zinc-900 rounded-3xl p-6 lg:p-8 max-w-md w-full">
     <h3 class="text-2xl font-bold mb-4">Gemini API ключ</h3>
-    <input id="api-key-input" type="text" placeholder="AIzaSy..." class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 text-lg">
-    <p class="text-xs text-zinc-400 mt-4">Получить бесплатно: <a href="https://aistudio.google.com/app/apikey" target="_blank" class="underline text-emerald-400">aistudio.google.com</a></p>
+    <div class="bg-blue-900/30 border border-blue-700 rounded-2xl p-4 mb-4 text-sm text-blue-300">
+      <b>Это нужно для анализа фото:</b><br>
+      1. Открой <a href="https://aistudio.google.com/app/apikey" target="_blank" class="underline font-bold">aistudio.google.com</a><br>
+      2. Нажми "Create API key"<br>
+      3. Скопируй весь ключ (начинается с AIza...)
+    </div>
+    <input id="api-key-input" type="text" placeholder="AIzaSy..." class="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 text-lg font-mono mb-4">
+    <p class="text-xs text-zinc-400 mb-4">⚠️ Убедись, что ключ полный и скопирован без пробелов!</p>
     <div class="mt-8 flex gap-3">
-      <button onclick="hideApiKeyModal()" class="flex-1 py-4 border border-zinc-700 rounded-2xl">Отмена</button>
-      <button onclick="saveApiKey()" class="flex-1 py-4 bg-emerald-500 rounded-2xl">Сохранить</button>
+      <button onclick="hideApiKeyModal()" class="flex-1 py-4 border border-zinc-700 rounded-2xl hover:bg-zinc-800">Отмена</button>
+      <button onclick="saveApiKey()" class="flex-1 py-4 bg-emerald-500 rounded-2xl hover:bg-emerald-600 font-bold">Сохранить</button>
     </div>
   </div>
 </div>
@@ -263,8 +269,8 @@
 // =============================================
 //  ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 // =============================================
-let API_KEY = 'AIzaSyDa09sFNNxEZysXQ-qsmyZgUr6bnloNowM'; // Вставь сюда свой API ключ от Gemini
-if (!API_KEY || API_KEY === 'AIzaSyDa09sFNNxEZysXQ-qsmyZgUr6bnloNowM') API_KEY = localStorage.getItem('geminiKey') || '';
+let API_KEY = 'AIzaSyAjGsFF3HyNHw0VVC3q3eGlTo9iVtOEKvo'; // Вставь сюда свой API ключ от Gemini (получить на https://aistudio.google.com/app/apikey)
+if (!API_KEY) API_KEY = localStorage.getItem('geminiKey') || '';
 let currentPhotoBase64 = '';
 let currentIngredients = [];
 let currentTotal = { cal: 0, prot: 0, fat: 0, carb: 0 };
@@ -338,23 +344,42 @@ async function startRealAnalysis() {
 
   const loading = document.createElement('div');
   loading.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;color:white';
-  loading.innerHTML = `<div class="text-center"><div class="w-20 h-20 border-8 border-emerald-500 border-t-transparent animate-spin mx-auto mb-6"></div><p class="text-2xl">Gemini 2.5 Flash считает...</p></div>`;
+  loading.innerHTML = `<div class="text-center"><div class="w-20 h-20 border-8 border-emerald-500 border-t-transparent animate-spin mx-auto mb-6"></div><p class="text-2xl">Gemini 2.5 Flash считает...</p><p style="margin-top:20px;font-size:14px;color:#999;">Это может занять 10-30 сек...</p></div>`;
   document.body.appendChild(loading);
 
   try {
     const base64 = currentPhotoBase64.split(',')[1];
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
-    const corsProxy = 'https://thingproxy.freeboard.io/fetch/';
     
-    const res = await fetch(corsProxy + apiUrl, {
+    const fetchOptions = {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ contents: [{ parts: [{ text: SYSTEM_PROMPT }, { inlineData: { mimeType: "image/jpeg", data: base64 } }] }] })
-    });
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        contents: [{ 
+          parts: [
+            { text: SYSTEM_PROMPT }, 
+            { inlineData: { mimeType: "image/jpeg", data: base64 } }
+          ] 
+        }] 
+      }),
+      mode: 'cors',
+      cache: 'no-cache'
+    };
+
+    const res = await Promise.race([
+      fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`, fetchOptions),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Истекло время ожидания ответа от API (60 сек)')), 60000))
+    ]);
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(`Ошибка API (${res.status}): ${errorData.error?.message || 'Проверь ключ или попробуй позже'}`);
+    }
 
     const data = await res.json();
-    if (!res.ok || !data.candidates || !data.candidates[0]) {
-      throw new Error(data.error?.message || "Ошибка Gemini. Проверь ключ / интернет.");
+    if (!data.candidates || !data.candidates[0]) {
+      throw new Error("Gemini не вернул результат. Попробуй другое фото.");
     }
 
     const text = data.candidates[0].content.parts[0].text;
@@ -374,9 +399,17 @@ async function startRealAnalysis() {
     updateTotals();
     updateMacroChart();
   } catch (e) {
-    alert("❌ " + e.message);
+    let errorMsg = e.message;
+    if (e instanceof TypeError && e.message.includes('Failed to fetch')) {
+      errorMsg = '❌ Ошибка сети. Проверь интернет или API ключ.\n\nЕсли используешь мобильный, отключи VPN/прокси.';
+    } else if (e.message.includes('CORS')) {
+      errorMsg = '❌ Ошибка доступа. Проверь, что API ключ активирован.';
+    }
+    alert(errorMsg);
   } finally {
-    document.body.removeChild(loading);
+    if (document.body.contains(loading)) {
+      document.body.removeChild(loading);
+    }
   }
 }
 
@@ -471,7 +504,7 @@ function renderHistory() {
     const div = document.createElement('div');
     div.className = "bg-zinc-900 rounded-3xl p-6 flex flex-col sm:flex-row gap-6 items-center";
     div.innerHTML = `
-      <img src="${entry.photo}" class="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-3xl">
+      <div class="w-20 h-20 sm:w-24 sm:h-24 bg-emerald-500 rounded-3xl flex items-center justify-center text-3xl">🍽️</div>
       <div class="flex-1">
         <div class="text-xs text-zinc-500">${entry.date}</div>
         <div class="text-lg sm:text-xl font-semibold">${entry.dish}</div>
@@ -495,7 +528,7 @@ function addToLog() {
     date: dateStr,
     dish: name,
     calories: currentTotal.cal,
-    photo: currentPhotoBase64
+    // Убрали photo, чтобы не превышать лимит localStorage
   });
 
   if (!dailyLog[today]) dailyLog[today] = { cal: 0, prot: 0 };
@@ -607,12 +640,18 @@ function showApiKeyModal() { document.getElementById('apikey-modal').classList.r
 function hideApiKeyModal() { document.getElementById('apikey-modal').classList.add('hidden'); }
 function saveApiKey() {
   const key = document.getElementById('api-key-input').value.trim();
-  if (key) {
-    API_KEY = key;
-    localStorage.setItem('geminiKey', key);
-    document.getElementById('api-status').innerHTML = '<span class="text-emerald-400">Ключ сохранён ✓</span>';
-    hideApiKeyModal();
+  if (!key) {
+    alert('Введи API ключ');
+    return;
   }
+  if (key.length < 30) {
+    alert('Ключ выглядит слишком коротким. Скопируй полный ключ с https://aistudio.google.com/app/apikey');
+    return;
+  }
+  API_KEY = key;
+  localStorage.setItem('geminiKey', key);
+  document.getElementById('api-status').innerHTML = '<span class="text-emerald-400">Ключ сохранён ✓</span>';
+  hideApiKeyModal();
 }
 
 // =============================================
